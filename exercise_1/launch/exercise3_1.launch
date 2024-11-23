@@ -23,6 +23,6 @@
   </node>
 
   <node name="rviz" pkg="rviz" type="rviz" required="true" output="screen"
-            args="-d $(rospack find mir_navigation)/rviz/navigation.rviz" />
+            args="-d $(find mir_navigation)/rviz/navigation.rviz" />
 
 </launch>
