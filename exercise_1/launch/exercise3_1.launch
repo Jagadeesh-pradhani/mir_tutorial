@@ -24,5 +24,7 @@
 
   <node name="rviz" pkg="rviz" type="rviz" required="true" output="screen"
             args="-d $(find exercise_2)/rviz/amcl.rviz" />
+  <node name="teleop" pkg="teleop_twist_keyboard" type="teleop_twist_keyboard.py" output="screen" launch-prefix="xterm -e" />
+
 
 </launch>
