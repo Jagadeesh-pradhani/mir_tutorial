@@ -23,6 +23,6 @@
   </node>
 
   <node name="rviz" pkg="rviz" type="rviz" required="true" output="screen"
-            args="-d $(find mir_navigation)/rviz/navigation.rviz" />
+            args="-d $(find exercise_2)/rviz/amcl.rviz" />
 
 </launch>
