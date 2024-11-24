@@ -46,7 +46,7 @@ private:
     int stations_count_;
     float battery_level_;
     bool interrupted_, mission_complete_, current_goal_reached_, int_goal_reached_, returning_, returned_, waiting_r_;
-
+    std::string state_;
     geometry_msgs::Pose robot_pose_, current_goal_;
     std::vector<std::string> stations_;
     std::vector<std::string> stations_to_cover_;
@@ -66,6 +66,7 @@ WaypointNavigator::WaypointNavigator()
     returning_(false),
     returned_(false),
     mission_complete_(false),
+    state_("Idle"),
     waiting_r_(false) 
 {
     for (int i = 1; i <= 8; ++i) {
@@ -75,7 +76,6 @@ WaypointNavigator::WaypointNavigator()
         stations_to_cover_.push_back("station" + std::to_string(i));
     }
 
-    ROS_INFO("Station count : %d",stations_count_);
     populateStationDockPositions();
 
     // Subscribers
@@ -89,10 +89,8 @@ WaypointNavigator::WaypointNavigator()
     // Service client
     reset_battery_client_ = nh_.serviceClient<std_srvs::Empty>("/reset_battery");
 
-    ROS_INFO("Waiting for station positions...");
     ros::Duration(4.0).sleep();
-    // resetBattery();
-    // startNavigation();
+
 
 
     
@@ -101,18 +99,15 @@ WaypointNavigator::WaypointNavigator()
 
 void WaypointNavigator::batteryCallback(const std_msgs::Float32::ConstPtr& msg) {
     battery_level_ = msg->data;
-    ROS_INFO("Battery: %.2f", battery_level_);
+    ROS_INFO("Battery: %.2f State : %s", battery_level_, state_.c_str());
 }
 
 void WaypointNavigator::modelStatesCallback(const gazebo_msgs::ModelStates::ConstPtr& msg) {
     try {
-        // ROS_INFO("Battery: %.2f, current_goal_reached_ : %d, ", battery_level_, current_goal_reached_);
         for (size_t i = 0; i < msg->name.size(); ++i) {
             if (msg->name[i] == "mir") {
                 robot_pose_ = msg->pose[i];
-                // ROS_INFO("Robot pose collecrted");
             } else if (station_positions_.find(msg->name[i]) != station_positions_.end()) {
-                // ROS_INFO("Station pose collecrted");
                 station_positions_[msg->name[i]] = msg->pose[i];
             }
         }
@@ -123,13 +118,10 @@ void WaypointNavigator::modelStatesCallback(const gazebo_msgs::ModelStates::Cons
 
 void WaypointNavigator::resultCallback(const move_base_msgs::MoveBaseActionResult::ConstPtr& result) {
     if (result->status.status == 3) {
-        ROS_INFO("Got result");
         if(waiting_r_) {
-            ROS_INFO("Returned home!");
             int_goal_reached_ = true;
         }
         else {
-            ROS_INFO("Goal reached!");
             current_goal_reached_ = true;
         }
         
@@ -143,19 +135,18 @@ void WaypointNavigator::sendGoal(const geometry_msgs::Pose& pose) {
     goal.pose = pose;
 
     goal_pub_.publish(goal);
-    ROS_INFO("Goal published!");
 }
 
 void WaypointNavigator::returnToStart() {
+    state_ = "Returning";
     const std::string starting_station = "station8";
     if (station_positions_.find(starting_station) == station_positions_.end()) {
-        ROS_WARN("Starting position (%s) not found!", starting_station.c_str());
+        //ROS_WARN("Starting position (%s) not found!", starting_station.c_str());
         while (station_positions_.find(starting_station) != station_positions_.end()) {
             ros::Duration(1.0).sleep();
         }
     }
 
-    ROS_INFO("Returning to starting position...");
     returning_ = true;
 
     int_goal_reached_ = false;
@@ -163,7 +154,6 @@ void WaypointNavigator::returnToStart() {
     sendGoal(station_dock_positions_[starting_station]);
 
     while (!int_goal_reached_ && ros::ok()) {
-        ROS_INFO("Waiting_r %d",int_goal_reached_);
         ros::Duration(1.0).sleep();
     }
 
@@ -172,11 +162,10 @@ void WaypointNavigator::returnToStart() {
 
 void WaypointNavigator::resetBattery() {
     std_srvs::Empty srv;
+    state_ = "Recharging";
     if (reset_battery_client_.call(srv)) {
         returned_ = true;
-        ROS_INFO("Battery Charging.");
         ros::Duration(5.0).sleep();
-        ROS_INFO("Battery reset successfully.");
         battery_level_ = 100.0;
         interrupted_ = false;
         returning_ = false;
@@ -188,20 +177,18 @@ void WaypointNavigator::resetBattery() {
 void WaypointNavigator::startNavigation() {
     for (const auto& station : stations_to_cover_) {
         if (interrupted_) {
-            ROS_INFO("Task interrupted. Waiting to resume.");
             while (interrupted_ && ros::ok()) {
                 ros::Duration(1.0).sleep();
             }
         }
 
         if (station_positions_.find(station) == station_positions_.end()) {
-            ROS_WARN("Position for %s not found!", station.c_str());
             while (station_positions_.find(station) != station_positions_.end()) {
                 ros::Duration(1.0).sleep();
             }
         }
 
-        ROS_INFO("Navigating to %s...", station.c_str());
+        state_ = "Navigating";
         const auto& station_pose = station_dock_positions_[station];
         current_goal_reached_ = false;
         sendGoal(station_pose);
@@ -210,23 +197,20 @@ void WaypointNavigator::startNavigation() {
 
         while (!current_goal_reached_ && !returning_ && ros::ok()) {
             
-            if(battery_level_ < 85.0 && !interrupted_) {
+            if(battery_level_ < 10.0 && !interrupted_) {
                 if(!returning_ && !returned_){
-                    ROS_WARN("Battery low returning...");
                     interrupted_ = true;
                     returnToStart();
                 }
                 if(!mission_complete_ && returned_) {
-                    ROS_WARN("Continue mission...");
+                    state_ = "Resuming";
                     returned_ = false;
                     waiting_r_ = false;
                     sendGoal(current_goal_);
                 }
             }
-            // ROS_INFO("Waiting_c %d",current_goal_reached_);
             ros::Duration(1.0).sleep();
         }
-        ROS_INFO("One way point completed");
     }
     mission_complete_ = true;
     returnToStart();
@@ -266,14 +250,10 @@ void WaypointNavigator::run() {
 }
 
 
-//! Main function
 int main(int argc, char **argv)
 {
     ros::init(argc, argv, "mir_waypoint_navigator");
     auto navigator = std::make_shared<WaypointNavigator>();
-    // WaypointNavigator navigator;
     navigator->run();
-    // ros::spin();
     return 0;
-
 }
